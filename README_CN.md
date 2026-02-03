@@ -1,7 +1,17 @@
-# VLP-LSTM-LB: 基于LSTM的可见光定位 (Scheduled Sampling 增强版)
+<div align="center">
+
+# VLP-LSTM-LB
+### 基于LSTM的可见光定位 (Scheduled Sampling 增强版)
 
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.0+-red.svg)](https://pytorch.org/)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+
+[**English**](README.md) | [**简体中文**](README_CN.md)
+
+</div>
+
+---
 
 基于深度学习（LSTM网络）的室内可见光定位系统。本项目集成了**基线模型 (V2)** 和**多头注意力模型 (MultiHead)**，并采用了先进的 **Scheduled Sampling** 策略来增强模型的鲁棒性。
 

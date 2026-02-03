@@ -1,9 +1,17 @@
-# VLP-LSTM-LB: Visible Light Positioning with LSTM (Enhanced with Scheduled Sampling)
+<div align="center">
+
+# VLP-LSTM-LB
+### Visible Light Positioning with LSTM (Enhanced with Scheduled Sampling)
 
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.0+-red.svg)](https://pytorch.org/)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-**[中文说明 (Chinese README)](README_CN.md)** | **[English README](README_EN.md)**
+[**English**](README.md) | [**简体中文**](README_CN.md)
+
+</div>
+
+---
 
 Deep learning-based indoor positioning using LED signals and LSTM networks. This project integrates both a **Baseline Model (V2)** and an **Advanced Multi-Head Attention Model**, featuring **Scheduled Sampling** for robust training.
 
