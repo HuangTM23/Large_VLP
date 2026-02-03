@@ -1,0 +1,82 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyTorch
+*.pth
+*.pt
+checkpoint/
+checkpoints/
+
+# Jupyter
+.ipynb_checkpoints
+*.ipynb
+
+# Environment
+venv/
+env/
+ENV/
+.venv
+pip-log.txt
+pip-delete-this-directory.txt
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+*.log
+logs/
+wandb/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+_tmp_*
+
+# Outputs (large files)
+outputs/models/*.pth
+outputs/gifs/*.gif
+outputs/figures/*.png
+outputs/figures/*.jpg
+
+# Keep directory structure
+!outputs/models/.gitkeep
+!outputs/figures/.gitkeep
+!outputs/gifs/.gitkeep
+!outputs/logs/.gitkeep
+!outputs/results/.gitkeep
+
+# Data (optional - uncomment if data is large)
+# data/
+# !data/.gitkeep
+
+# Archive
+archive/
+
+# OS
+Thumbs.db

@@ -1,0 +1,42 @@
+# VLP-LSTM-LB 配置文件
+
+# Weights & Biases 配置
+wandb:
+  enabled: true                      # 是否启用 wandb
+  project: "VLP-LSTM-LB"             # wandb 项目名称
+  entity: null                       # wandb 用户名/组织（null表示使用默认）
+  api_key: null                      # API密钥（null表示从~/.netrc或环境变量读取）
+  tags: ["vlp", "lstm", "indoor-positioning"]  # 标签
+  notes: "VLP training experiment"   # 实验备注
+  
+# 训练配置
+training:
+  epochs: 500
+  learning_rate: 0.001
+  
+  # 数据加载模式
+  data_mode: "full_trajectory"       # "full_trajectory" 或 "sliding_window"
+  
+  # Batch Size 说明：
+  # - full_trajectory 模式: 默认 batch_size=1，逐条处理完整轨迹
+  #   适合轨迹长度差异大的情况，内存友好，无需 padding
+  # - sliding_window 模式: 可以设置 batch_size=4, 8, 16
+  #   将长轨迹切分为固定窗口，可以多条一起训练
+  
+  batch_size: null                   # null表示使用模式默认值（full=1, window=4）
+  
+  # 滑动窗口参数（仅在 sliding_window 模式下使用）
+  window_size: 50                    # 窗口大小（时间步）
+  stride: 25                         # 滑动步长
+
+# 模型配置
+model:
+  v2:
+    lstm_hidden: 128
+    lstm_layers: 2
+    dropout: 0.5
+  multihead:
+    lstm_hidden: 128
+    lstm_layers: 2
+    dropout: 0.5
+    head_dim: 64
