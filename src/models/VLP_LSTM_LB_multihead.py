@@ -751,15 +751,15 @@ def test_model(test_dir, model_file, show_traj=True, device=None,
     print(f"Test device: {device}")
     
     # 动态导入 create_dataloader
-    from utils.data_utils import create_dataloader, RSSDatasetLED
+    from utils.data_utils import create_dataloader, TrajectoryDataset
     
     # 加载训练数据获取归一化统计
     train_dir = os.path.join(os.path.dirname(test_dir), 'train')
     if not os.path.exists(train_dir):
         print("Warning: Train dir not found. Using test set stats.")
-        train_dataset_for_stats = RSSDatasetLED(test_dir, normalize=True)
+        train_dataset_for_stats = TrajectoryDataset(test_dir, normalize=True)
     else:
-        train_dataset_for_stats = RSSDatasetLED(train_dir, normalize=True)
+        train_dataset_for_stats = TrajectoryDataset(train_dir, normalize=True)
     
     # 创建 DataLoader
     loader = create_dataloader(

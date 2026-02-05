@@ -319,16 +319,16 @@ def test_model(test_dir: str, model_file: str, show_traj: bool, device=None,
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
     # 动态导入 create_dataloader 以避免循环依赖
-    from utils.data_utils import create_dataloader, RSSDatasetLED
+    from utils.data_utils import create_dataloader, TrajectoryDataset
     
     train_dir = os.path.join(os.path.dirname(test_dir), 'train')
     if not os.path.exists(train_dir):
         # 如果找不到训练集，尝试用测试集自己归一化（不推荐，但作为fallback）
         print("Warning: Train dir not found. Using test set stats for normalization.")
-        train_dataset_for_stats = RSSDatasetLED(test_dir, normalize=True)
+        train_dataset_for_stats = TrajectoryDataset(test_dir, normalize=True)
     else:
         # Use training data stats for normalization
-        train_dataset_for_stats = RSSDatasetLED(train_dir, normalize=True)
+        train_dataset_for_stats = TrajectoryDataset(train_dir, normalize=True)
     
     # 创建测试集加载器
     # 注意：测试时 batch_size=1 以方便可视化和指标计算
