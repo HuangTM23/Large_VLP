@@ -378,15 +378,9 @@ def test_model(test_dir: str, model_file: str, show_traj: bool, device=None,
     
     with torch.no_grad():
         for batch_idx, batch_data in enumerate(test_loader):
-            # 解包数据
-            if mode == 'full_trajectory':
-                # (rss, pos, length, traj_id)
-                rss_seq = batch_data[0].to(device)
-                gt_pos = batch_data[1].to(device)
-            else:
-                # (rss, pos, length, traj_id) - 但batch_size=1，结构类似
-                rss_seq = batch_data['rss'].unsqueeze(0).to(device) # [1, T, 12]
-                gt_pos = batch_data['pos'].unsqueeze(0).to(device)  # [1, T, 3]
+            # Since batch_size=1 and no custom collate, batch_data is a dict of tensors with batch dim
+            rss_seq = batch_data['rss'].to(device) # [1, T, 12]
+            gt_pos = batch_data['pos'].to(device)  # [1, T, 3]
             
             # 提取初始位置（第一帧真值）作为锚点
             init_pos = gt_pos[:, 0, :]

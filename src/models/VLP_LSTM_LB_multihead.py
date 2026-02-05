@@ -803,13 +803,9 @@ def test_model(test_dir, model_file, show_traj=True, device=None,
     
     with torch.no_grad():
         for batch_data in loader:
-            # 解包
-            if mode == 'full_trajectory':
-                rss_seq = batch_data[0].to(device)
-                gt_pos = batch_data[1].to(device)
-            else:
-                rss_seq = batch_data['rss'].unsqueeze(0).to(device)
-                gt_pos = batch_data['pos'].unsqueeze(0).to(device)
+            # batch_size=1 returns a dict of tensors with batch dimension
+            rss_seq = batch_data['rss'].to(device)
+            gt_pos = batch_data['pos'].to(device)
             
             init_pos = gt_pos[:, 0, :]
             
