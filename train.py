@@ -31,6 +31,11 @@ def main():
     parser.add_argument('--train_dir', type=str, default='data/train',
                        help='Training data directory')
     
+    # Training mode
+    parser.add_argument('--mode', type=str, default='full_trajectory',
+                       choices=['full_trajectory'],
+                       help='Training mode (currently only full_trajectory supported)')
+    
     # Training hyperparameters
     parser.add_argument('--epochs', type=int, default=None,
                        help='Number of training epochs (default: from config or 500)')

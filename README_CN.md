@@ -48,34 +48,20 @@
 
 ## 🛠 训练指南
 
-所有训练通过 `train.py` 进行。根据你的硬件资源和需求选择以下组合。
+所有训练通过 `train.py` 进行。该脚本默认使用 **全轨迹模式 (Full Trajectory)** 以保证 LSTM 状态的连续性。
 
 ### 1. 训练基线模型 (V2)
 
-**方案 A：追求最高精度（推荐）**
-使用全轨迹模式，一次处理整条路径。
 ```bash
-python3 train.py --model v2 --mode full_trajectory --epochs 3000
-```
-
-**方案 B：追求训练速度**
-使用滑动窗口模式，增大 Batch Size 并行训练。
-```bash
-python3 train.py --model v2 --mode sliding_window --window_size 100 --batch_size 16 --epochs 3000
+python3 train.py --model v2 --epochs 3000
 ```
 
 ### 2. 训练多头模型 (MultiHead)
 
-**方案 A：标准训练（推荐）**
 ```bash
-python3 train.py --model multihead --mode full_trajectory --epochs 500
+python3 train.py --model multihead --epochs 1000
 ```
 *注：MultiHead 收敛较快，通常 500-1000 epoch 即可。*
-
-**方案 B：高性能并行训练**
-```bash
-python3 train.py --model multihead --mode sliding_window --window_size 100 --batch_size 8 --epochs 500
-```
 
 ### 3. 自定义参数
 你可以灵活调整超参数覆盖 `config.yaml` 中的默认值：
@@ -84,7 +70,7 @@ python3 train.py \
     --model multihead \
     --lr 5e-4 \
     --epochs 1000 \
-    --train_dir data/train_large \
+    --train_dir data/train \
     --output outputs/models/my_experiment.pth
 ```
 
@@ -92,43 +78,32 @@ python3 train.py \
 
 ## 🧪 测试指南
 
-测试脚本 `test.py` 支持与训练相同的两种数据模式。
+测试脚本 `test.py` 在整条测试轨迹上评估模型，以检查轨迹的连贯性。
 
-### 1. 全轨迹测试 (Full Trajectory) - 推荐
-最接近真实应用场景。模型一次性处理整条测试轨迹。
-**适用场景**：评估最终定位精度、轨迹连贯性。
-
+### 1. 运行评估
 ```bash
-# 自动加载对应的模型类并测试
-python3 test.py --model_path outputs/models/multihead_full_trajectory_e500.pth
+# 自动识别模型类型并进行测试
+python3 test.py --model_path outputs/models/multihead_full_e1000.pth
 ```
 
-### 2. 滑动窗口测试 (Sliding Window)
-将测试轨迹切分为固定窗口进行评估。
-**适用场景**：评估模型对局部切片的处理能力，或当模型是用 sliding_window 训练且无法处理长序列时。
-
+### 2. 指定测试集
 ```bash
-# 使用与训练时相同的窗口设置 (如 window=50, stride=50)
-python3 test.py \
-    --model_path outputs/models/my_model.pth \
-    --mode sliding_window \
-    --window_size 50 \
-    --stride 50
+python3 test.py --model_path outputs/models/model.pth --test_dir data/test
 ```
 
-### 3. 指定测试集与批量评估
+### 3. 其他选项
 ```bash
-# 指定测试集目录
-python3 test.py --model_path outputs/models/model.pth --test_dir data/test_hard
-
-# 关闭可视化 (适合批量跑)
+# 关闭可视化
 python3 test.py --model_path outputs/models/model.pth --no_viz
+
+# 强制指定模型类型
+python3 test.py --model_path outputs/models/model.pth --model v2
 ```
 
 **输出解读：**
 - **RMSE (m)**: 均方根误差，定位精度的核心指标。
 - **MAE (m)**: 平均绝对误差。
-- **可视化**: 结果图会自动保存在模型所在目录（如 `outputs/models/test_results_multihead.png`）。
+- **可视化**: 对比图会自动保存在 `outputs/results/test_viz_<model>.png`。
 
 ---
 

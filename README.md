@@ -48,34 +48,20 @@ Deep learning-based indoor positioning using LED signals and LSTM networks. This
 
 ## 🛠 Training Guide
 
-All training is handled via `train.py`. Choose the configuration that fits your hardware and goals.
+All training is handled via `train.py`. The script uses **Full Trajectory** mode by default to maintain LSTM state continuity.
 
 ### 1. Train Baseline Model (V2)
 
-**Option A: Best Precision (Recommended)**
-Uses full trajectory mode.
 ```bash
-python3 train.py --model v2 --mode full_trajectory --epochs 3000
-```
-
-**Option B: Fast Training**
-Uses sliding window mode with larger batch sizes.
-```bash
-python3 train.py --model v2 --mode sliding_window --window_size 100 --batch_size 16 --epochs 3000
+python3 train.py --model v2 --epochs 3000
 ```
 
 ### 2. Train Multi-Head Model (MultiHead)
 
-**Option A: Standard Training (Recommended)**
 ```bash
-python3 train.py --model multihead --mode full_trajectory --epochs 500
+python3 train.py --model multihead --epochs 1000
 ```
 *Note: MultiHead converges faster; 500-1000 epochs are usually sufficient.*
-
-**Option B: High-Performance Parallel Training**
-```bash
-python3 train.py --model multihead --mode sliding_window --window_size 100 --batch_size 8 --epochs 500
-```
 
 ### 3. Custom Parameters
 Override `config.yaml` defaults via command line:
@@ -84,7 +70,7 @@ python3 train.py \
     --model multihead \
     --lr 5e-4 \
     --epochs 1000 \
-    --train_dir data/train_large \
+    --train_dir data/train \
     --output outputs/models/my_experiment.pth
 ```
 
@@ -92,44 +78,32 @@ python3 train.py \
 
 ## 🧪 Testing Guide
 
-The `test.py` script supports the same data modes as training.
+The `test.py` script evaluates the model on the entire test path to assess trajectory coherence.
 
-### 1. Full Trajectory Test (Recommended)
-Simulates real-world usage by processing the entire test path at once.
-**Best for**: Final accuracy assessment, trajectory coherence.
-
+### 1. Run Evaluation
 ```bash
 # Auto-detect model type and test
-python3 test.py --model_path outputs/models/multihead_full_trajectory_e500.pth
+python3 test.py --model_path outputs/models/multihead_full_e1000.pth
 ```
 
-### 2. Sliding Window Test
-Evaluates the model on fixed-length segments.
-**Best for**: Analyzing local performance or testing models trained specifically on windows.
-
+### 2. Specify Test Directory
 ```bash
-# Use same window settings as training (e.g., window=50, stride=50)
-python3 test.py \
-    --model_path outputs/models/my_model.pth \
-    --mode sliding_window \
-    --window_size 50 \
-    --stride 50
+python3 test.py --model_path outputs/models/model.pth --test_dir data/test
 ```
 
-### 3. Batch Evaluation
-
+### 3. Options
 ```bash
-# Specify test directory
-python3 test.py --model_path outputs/models/model.pth --test_dir data/test_hard
-
-# Disable visualization (for batch scripts)
+# Disable visualization
 python3 test.py --model_path outputs/models/model.pth --no_viz
+
+# Force model type
+python3 test.py --model_path outputs/models/model.pth --model v2
 ```
 
 **Output Metrics:**
 - **RMSE (m)**: Root Mean Square Error (Primary metric).
 - **MAE (m)**: Mean Absolute Error.
-- **Visualization**: Plots are saved to the model's directory (e.g., `test_results.png`).
+- **Visualization**: Comparison plots are saved to `outputs/results/test_viz_<model>.png`.
 
 ---
 

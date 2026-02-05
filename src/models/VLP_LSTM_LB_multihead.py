@@ -180,12 +180,87 @@ def test_model(test_dir, model_file, show_traj=True, device=None):
             pred = model(rss, init_pos=gt[:, 0, :])
             all_preds.append(pred.cpu().numpy()); all_gts.append(gt.cpu().numpy())
             
-    all_preds, all_gts = np.concatenate(all_preds), np.concatenate(all_gts)
-    rmse = np.sqrt(((all_preds - all_gts) ** 2).mean())
-    mae = np.abs(all_preds - all_gts).mean()
+        all_preds = np.concatenate([p.reshape(-1, 3) for p in all_preds], axis=0)
+        all_gts = np.concatenate([g.reshape(-1, 3) for g in all_gts], axis=0)
+        rmse = np.sqrt(((all_preds - all_gts) ** 2).mean())
+        mae = np.abs(all_preds - all_gts).mean()
+        
+        if show_traj:
+            plt.figure(figsize=(10, 8))
+            plt.plot(all_gts[:, 0], all_gts[:, 1], 'g-', label='GT', alpha=0.7)
+            plt.plot(all_preds[:, 0], all_preds[:, 1], 'r--', label='Pred', alpha=0.7)
+            plt.title(f'Test Results (Multi-Head)\nRMSE: {rmse:.4f}m')
+            plt.xlabel('X (m)'); plt.ylabel('Y (m)')
+            plt.legend(); plt.grid(True); plt.axis('equal')
+            plt.savefig('test_results_multihead.png')
+            if not (os.environ.get('DISPLAY', '') == ''): plt.show()
+            plt.close()
+        return rmse, mae, all_preds, all_gts
+
+# ==============================================================================
+# 3. 训练与数据工具 (为保持接口一致性)
+# ==============================================================================
+
+def train_model(train_dir, model_save_path, epochs, show_curves, global_led_count=36, device=None):
+    """
+    Multi-Head 版本的独立训练函数。
+    注意：建议使用根目录下的 unified train.py 进行训练，该脚本提供了更完整的 wandb 日志支持。
+    """
+    if device is None: device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    from utils.data_utils import create_dataloader, TrajectoryDataset
     
-    if show_traj:
-        plt.figure(figsize=(12, 5))
-        plt.subplot(1, 2, 1); plt.plot(all_gts[:, 0], all_gts[:, 1], 'g-'); plt.plot(all_preds[:, 0], all_preds[:, 1], 'r--'); plt.axis('equal')
-        plt.subplot(1, 2, 2); plt.hist(np.sqrt(((all_preds - all_gts)**2).sum(-1)).flatten(), bins=30); plt.savefig('test_results_multihead.png'); plt.close()
-    return rmse, mae, all_preds, all_gts
+    # 使用 TrajectoryDataset 获取数据
+    train_loader = create_dataloader(train_dir, batch_size=1, shuffle=True, augment=True)
+    led_pos_freq = train_loader.dataset.led_pos_freq
+    led_tensor = torch.from_numpy(led_pos_freq).float().to(device)
+    
+    model = MultiHead_VLP_LSTM(
+        global_led_num=len(led_pos_freq),
+        led_feat_dim=8,
+        lstm_hidden=128,
+        lstm_layers=2,
+        dropout=0.5,
+        head_dim=64,
+        global_led_pos_freq=led_tensor
+    ).to(device)
+    
+    criterion = nn.MSELoss()
+    optimizer = optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=1e-6)
+    scaler = torch.amp.GradScaler('cuda', enabled=(device.type == 'cuda'))
+
+    print(f"Starting Multi-Head training on {device}...")
+    for epoch in range(epochs):
+        model.train()
+        epoch_rmse = 0.0
+        for batch in train_loader:
+            rss, gt = batch['rss'].to(device), batch['pos'].to(device)
+            optimizer.zero_grad()
+            with torch.amp.autocast('cuda', enabled=scaler.is_enabled()):
+                pred = model(rss, init_pos=gt[:, 0, :], gt_pos_seq=gt, tf_ratio=0.5)
+                loss = criterion(pred, gt)
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+            epoch_rmse += torch.sqrt(loss).item()
+        
+        scheduler.step()
+        if (epoch + 1) % 10 == 0:
+            print(f"Epoch {epoch+1}/{epochs} | RMSE: {epoch_rmse/len(train_loader):.4f}")
+
+    torch.save({
+        'model_state_dict': model.state_dict(),
+        'model_config': {
+            'global_led_num': len(led_pos_freq),
+            'led_feat_dim': 8,
+            'lstm_hidden': 128,
+            'lstm_layers': 2,
+            'dropout': 0.5,
+            'head_dim': 64
+        }
+    }, model_save_path)
+    print(f"Model saved to {model_save_path}")
+
+# 兼容性别名
+from .VLP_LSTM_LB_v2 import RSSDatasetLED, collate_pad
+    

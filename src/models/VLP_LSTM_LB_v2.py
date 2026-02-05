@@ -20,7 +20,10 @@ import pandas as pd
 import numpy as np
 import glob
 import os
-import imageio
+try:
+    import imageio
+except ImportError:
+    imageio = None
 import matplotlib
 import matplotlib.pyplot as plt
 
@@ -352,20 +355,38 @@ def test_model(test_dir: str, model_file: str, show_traj: bool, device=None):
             all_preds.append(pred_pos.cpu().numpy())
             all_gts.append(gt_pos.cpu().numpy())
 
-    all_preds = np.concatenate(all_preds)
-    all_gts = np.concatenate(all_gts)
-    avg_rmse = np.sqrt(((all_preds - all_gts) ** 2).mean())
-    avg_mae = np.mean(np.abs(all_preds - all_gts))
-    
-    if show_traj:
-        plt.figure(figsize=(10, 8))
-        limit = min(2000, len(all_preds))
-        plt.plot(all_gts[:limit, 0], all_gts[:limit, 1], 'g-', label='GT', alpha=0.7)
-        plt.plot(all_preds[:limit, 0], all_preds[:limit, 1], 'r--', label='Pred', alpha=0.7)
-        plt.title(f'Test Results (First {limit} pts)'); plt.xlabel('X (m)'); plt.ylabel('Y (m)')
-        plt.legend(); plt.grid(True); plt.axis('equal')
-        plt.savefig('test_results.png')
-        if not (os.environ.get('DISPLAY', '') == ''): plt.show()
-        plt.close()
+        all_preds = np.concatenate([p.reshape(-1, 3) for p in all_preds], axis=0)
 
-    return avg_rmse, avg_mae, all_preds, all_gts
+        all_gts = np.concatenate([g.reshape(-1, 3) for g in all_gts], axis=0)
+
+        avg_rmse = np.sqrt(((all_preds - all_gts) ** 2).mean())
+
+        avg_mae = np.mean(np.abs(all_preds - all_gts))
+
+        
+
+        if show_traj:
+
+            plt.figure(figsize=(10, 8))
+
+            limit = min(5000, len(all_preds))
+
+            plt.plot(all_gts[:limit, 0], all_gts[:limit, 1], 'g-', label='GT', alpha=0.7)
+
+            plt.plot(all_preds[:limit, 0], all_preds[:limit, 1], 'r--', label='Pred', alpha=0.7)
+
+            plt.title(f'Test Results (First {limit} pts)'); plt.xlabel('X (m)'); plt.ylabel('Y (m)')
+
+            plt.legend(); plt.grid(True); plt.axis('equal')
+
+            plt.savefig('test_results.png')
+
+            if not (os.environ.get('DISPLAY', '') == ''): plt.show()
+
+            plt.close()
+
+    
+
+        return avg_rmse, avg_mae, all_preds, all_gts
+
+    

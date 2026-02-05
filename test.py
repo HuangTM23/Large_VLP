@@ -31,6 +31,9 @@ def main():
     parser.add_argument('--model', choices=['v2', 'multihead'], default=None)
     parser.add_argument('--model_path', type=str, required=True)
     parser.add_argument('--test_dir', type=str, default='data/test')
+    parser.add_argument('--mode', type=str, default='full_trajectory',
+                       choices=['full_trajectory'],
+                       help='Testing mode (currently only full_trajectory supported)')
     parser.add_argument('--device', default='auto', choices=['auto', 'cpu', 'cuda'])
     parser.add_argument('--no_viz', action='store_true')
     
@@ -56,13 +59,42 @@ def main():
     print("=" * 70 + "\n")
     
     try:
-        rmse, mae, preds, gts = model_info['test'](
+        rmse, mae, all_preds, all_gts = model_info['test'](
             test_dir=args.test_dir,
             model_file=args.model_path,
-            show_traj=not args.no_viz,
+            show_traj=False,  # We will handle visualization here centrally
             device=device
         )
+        
         print(f"\nTest Summary | RMSE: {rmse:.4f} m | MAE: {mae:.4f} m")
+        
+        if not args.no_viz:
+            import matplotlib.pyplot as plt
+            
+            save_path = f'outputs/results/test_viz_{args.model}.png'
+            os.makedirs('outputs/results', exist_ok=True)
+            
+            plt.figure(figsize=(10, 8))
+            # Plot only first few points if too many, to keep it readable, but here we plot all as per user request for "trajectory comparison"
+            # If it's too many trajectories, we might just plot the first one or all concatenated.
+            # Usually all_preds is concatenated. Let's plot the first trajectory if it's too messy.
+            
+            plt.plot(all_gts[:, 0], all_gts[:, 1], 'g-', label='Ground Truth', alpha=0.7)
+            plt.plot(all_preds[:, 0], all_preds[:, 1], 'r--', label='Predicted', alpha=0.7)
+            
+            plt.title(f'Trajectory Comparison - {args.model}\nRMSE: {rmse:.4f}m, MAE: {mae:.4f}m')
+            plt.xlabel('X (m)')
+            plt.ylabel('Y (m)')
+            plt.legend()
+            plt.grid(True)
+            plt.axis('equal')
+            
+            plt.savefig(save_path)
+            print(f"✓ Comparison plot saved to: {save_path}")
+            
+            if os.environ.get('DISPLAY', '') != '':
+                plt.show()
+                
     except Exception as e:
         print(f"\n✗ Testing failed: {e}")
         import traceback
