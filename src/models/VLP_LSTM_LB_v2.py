@@ -313,81 +313,42 @@ def train_model(train_dir: str, model_save_path: str, epochs: int, show_curves: 
 # ---------------------
 # 6. Testing Script
 # ---------------------
-def test_model(test_dir: str, model_file: str, show_traj: bool, device=None,
-               mode='full_trajectory', window_size=50, stride=50):
+def test_model(test_dir: str, model_file: str, show_traj: bool, device=None):
     if device is None:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
-    # 动态导入 create_dataloader 以避免循环依赖
     from utils.data_utils import create_dataloader, TrajectoryDataset
     
     train_dir = os.path.join(os.path.dirname(test_dir), 'train')
-    if not os.path.exists(train_dir):
-        # 如果找不到训练集，尝试用测试集自己归一化（不推荐，但作为fallback）
-        print("Warning: Train dir not found. Using test set stats for normalization.")
-        train_dataset_for_stats = TrajectoryDataset(test_dir, normalize=True)
-    else:
-        # Use training data stats for normalization
-        train_dataset_for_stats = TrajectoryDataset(train_dir, normalize=True)
+    train_dataset_for_stats = TrajectoryDataset(train_dir if os.path.exists(train_dir) else test_dir, normalize=True)
     
-    # 创建测试集加载器
-    # 注意：测试时 batch_size=1 以方便可视化和指标计算
-    # 在 sliding_window 模式下，这意味着一次测试一个窗口
-    test_loader = create_dataloader(
-        test_dir,
-        mode=mode,
-        window_size=window_size,
-        stride=stride,
-        batch_size=1,
-        shuffle=False,
-        normalize=True
-    )
-    
-    # 强制覆盖归一化参数，确保与训练一致
+    test_loader = create_dataloader(test_dir, batch_size=1, shuffle=False, normalize=True)
     test_loader.dataset.rss_mean = train_dataset_for_stats.rss_mean
     test_loader.dataset.rss_std = train_dataset_for_stats.rss_std
-    print(f"Applied normalization stats: mean={test_loader.dataset.rss_mean:.4f}, std={test_loader.dataset.rss_std:.4f}")
+    
+    print(f"Applied normalization: mean={test_loader.dataset.rss_mean:.4f}, std={test_loader.dataset.rss_std:.4f}")
     
     ckpt = torch.load(model_file, map_location=device)
-    
-    # 恢复模型配置
-    # 优先使用 checkpoint 中的配置，如果没有则使用默认值
     model_config = ckpt.get('model_config', {})
     
-    # 确保 led_pos_freq 存在
     global_led_pos_freq_tensor = torch.from_numpy(test_loader.dataset.led_pos_freq).to(device)
     model_config['global_led_pos_freq'] = global_led_pos_freq_tensor
     
-    # 补全可能缺失的参数
-    if 'global_led_num' not in model_config: model_config['global_led_num'] = len(global_led_pos_freq_tensor)
-    if 'led_feat_dim' not in model_config: model_config['led_feat_dim'] = 8
-    if 'lstm_hidden' not in model_config: model_config['lstm_hidden'] = 128
-    
     model = Attentive_VLP_LSTM(**model_config).to(device)
     
-    # 清理state_dict中可能不兼容的键
     state_dict = ckpt['model_state_dict']
-    if 'global_led_feat' in state_dict:
-        del state_dict['global_led_feat']
-    
+    if 'global_led_feat' in state_dict: del state_dict['global_led_feat']
     model.load_state_dict(state_dict, strict=False)
     model.eval()
     
     all_preds, all_gts = [], []
-    print(f"Testing in mode: {mode} (Window: {window_size if mode=='sliding_window' else 'Full'})")
-    
     with torch.no_grad():
-        for batch_idx, batch_data in enumerate(test_loader):
-            # Since batch_size=1 and no custom collate, batch_data is a dict of tensors with batch dim
-            rss_seq = batch_data['rss'].to(device) # [1, T, 12]
-            gt_pos = batch_data['pos'].to(device)  # [1, T, 3]
-            
-            # 提取初始位置（第一帧真值）作为锚点
+        for batch_data in test_loader:
+            rss_seq = batch_data['rss'].to(device)
+            gt_pos = batch_data['pos'].to(device)
             init_pos = gt_pos[:, 0, :]
             
-            # 推理 (使用 tf_ratio=0.0，完全自回归)
             pred_pos = model(rss_seq, init_pos=init_pos, gt_pos_seq=None, tf_ratio=0.0)
-            
             all_preds.append(pred_pos.cpu().numpy())
             all_gts.append(gt_pos.cpu().numpy())
 
@@ -396,29 +357,14 @@ def test_model(test_dir: str, model_file: str, show_traj: bool, device=None,
     avg_rmse = np.sqrt(((all_preds - all_gts) ** 2).mean())
     avg_mae = np.mean(np.abs(all_preds - all_gts))
     
-    print(f"\nTesting complete! RMSE: {avg_rmse:.4f} m, MAE: {avg_mae:.4f} m")
-    
-    if show_traj and mode == 'full_trajectory':
+    if show_traj:
         plt.figure(figsize=(10, 8))
-        for i in range(min(4, len(all_preds))):
-            # 由于concatenate压扁了batch维度，这里假设all_preds已经是[总点数, 3]
-            # 为了画轨迹，我们需要重新按轨迹分割，但简单起见，这里只画前N个点
-            # 更好的做法是在循环里画。为了保持兼容性，这里暂时只画散点或简单连线
-            pass 
-        
-        # 重新实现一个简单的绘图，只画第一条轨迹
-        # 注意：all_preds 是所有轨迹拼接后的结果 [N_total, 3]
-        # 如果是 sliding_window，轨迹是断开的，画出来可能乱七八糟
-        # 所以只有 full_trajectory 才建议画图
-        
-        # 简单可视化：画前 1000 个点
-        limit = min(1000, len(all_preds))
+        limit = min(2000, len(all_preds))
         plt.plot(all_gts[:limit, 0], all_gts[:limit, 1], 'g-', label='GT', alpha=0.7)
         plt.plot(all_preds[:limit, 0], all_preds[:limit, 1], 'r--', label='Pred', alpha=0.7)
-        
-        plt.title(f'Test Trajectory Segment (First {limit} steps)'); plt.xlabel('X (m)'); plt.ylabel('Y (m)')
+        plt.title(f'Test Results (First {limit} pts)'); plt.xlabel('X (m)'); plt.ylabel('Y (m)')
         plt.legend(); plt.grid(True); plt.axis('equal')
-        plt.savefig('test_trajectories.png'); print("Saved plot to test_trajectories.png")
+        plt.savefig('test_results.png')
         if not (os.environ.get('DISPLAY', '') == ''): plt.show()
         plt.close()
 
