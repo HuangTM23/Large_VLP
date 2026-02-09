@@ -43,7 +43,7 @@ model:
     head_dim: 64
   hierarchical:
     window_size: 50
-    stride: 25
+    stride: 10
     feature_dim: 64
     lstm_hidden: 128
     dropout: 0.2

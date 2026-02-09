@@ -24,7 +24,7 @@ def main():
     
     # Model selection
     parser.add_argument('--model', type=str, default='v2',
-                       choices=['v2', 'multihead'],
+                       choices=['v2', 'multihead', 'hierarchical'],
                        help='Model architecture (default: v2)')
     
     # Data paths
@@ -169,8 +169,9 @@ def main():
             model_config['window_size'] = model_params.get('window_size', 50)
             model_config['stride'] = model_params.get('stride', 25)
             model_config['feature_dim'] = model_params.get('feature_dim', 64)
-            # Hierarchical 模型不需要 lstm_layers（目前实现是固定的）
-            if 'lstm_layers' in model_config: del model_config['lstm_layers']
+            # Hierarchical 模型不需要 LED 相关的配置参数
+            for key in ['global_led_num', 'led_feat_dim', 'lstm_layers', 'dropout']:
+                if key in model_config: del model_config[key]
         
         model = ModelClass(**model_config).to(device)
         
@@ -204,35 +205,34 @@ def main():
                 init_pos = gt_pos[:, 0, :]
                 
                 optimizer.zero_grad(set_to_none=True)
-                                    with torch.amp.autocast('cuda', enabled=scaler.is_enabled()):
-                                        # Forward pass (传入 init_pos 和 tf_ratio)
-                                        pred_pos = model(rss_seq, init_pos=init_pos, gt_pos_seq=gt_pos, tf_ratio=tf_ratio)
-                                        
-                                        # --- 特殊处理 Hierarchical 模型 ---
-                                        if args.model == 'hierarchical':
-                                            window_size = model_config.get('window_size', 50)
-                                            stride = model_config.get('stride', 25)
-                                            gt_chunks = gt_pos.transpose(1, 2).unfold(2, window_size, stride)
-                                            target_pos = gt_chunks[:, :, :, -1].transpose(1, 2)
-                                            loss = criterion(pred_pos, target_pos)
-                                        
-                                        # --- 特殊处理 V2 模型的 Window Loss ---
-                                        elif args.model == 'v2' and model_config.get('smoothing_window', 1) > 1:
-                                            sw = model_config['smoothing_window']
-                                            # 使用 unfold 将 pred 和 gt 都切分为窗口
-                                            # pred: [B, T, 3] -> [B, 3, T] -> unfold -> [B, 3, T_win, sw]
-                                            # 我们希望计算每个时间点对应的那个窗口的平均 Loss
-                                            p_win = pred_pos.transpose(1, 2).unfold(2, sw, 1)
-                                            g_win = gt_pos.transpose(1, 2).unfold(2, sw, 1)
-                                            # 计算窗口间的 MSE
-                                            loss = F.mse_loss(p_win, g_win)
-                                            target_pos = gt_pos # 绘图仍使用原图
-                                        
-                                        else:
-                                            target_pos = gt_pos
-                                            loss = criterion(pred_pos, target_pos)
-                                    
-                                    scaler.scale(loss).backward()                scaler.step(optimizer)
+                with torch.amp.autocast('cuda', enabled=scaler.is_enabled()):
+                    # Forward pass (传入 init_pos 和 tf_ratio)
+                    pred_pos = model(rss_seq, init_pos=init_pos, gt_pos_seq=gt_pos, tf_ratio=tf_ratio)
+                    
+                    # --- 特殊处理 Hierarchical 模型 ---
+                    if args.model == 'hierarchical':
+                        window_size = model_config.get('window_size', 50)
+                        stride = model_config.get('stride', 25)
+                        gt_chunks = gt_pos.transpose(1, 2).unfold(2, window_size, stride)
+                        target_pos = gt_chunks[:, :, :, -1].transpose(1, 2)
+                        loss = criterion(pred_pos, target_pos)
+                    
+                    # --- 特殊处理 V2 模型的 Window Loss ---
+                    elif args.model == 'v2' and model_config.get('smoothing_window', 1) > 1:
+                        sw = model_config['smoothing_window']
+                        # 使用 unfold 将 pred 和 gt 都切分为窗口
+                        p_win = pred_pos.transpose(1, 2).unfold(2, sw, 1)
+                        g_win = gt_pos.transpose(1, 2).unfold(2, sw, 1)
+                        # 计算窗口间的 MSE
+                        loss = F.mse_loss(p_win, g_win)
+                        target_pos = gt_pos # 绘图仍使用原图
+                    
+                    else:
+                        target_pos = gt_pos
+                        loss = criterion(pred_pos, target_pos)
+                
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
                 scaler.update()
                 
                 epoch_rmse += calc_rmse(pred_pos, target_pos)
@@ -247,26 +247,26 @@ def main():
             avg_rmse = epoch_rmse / num_batches
             avg_loss = epoch_loss / num_batches
             
-                # 每 100 个 Epoch 画一次轨迹对比图
-                if (epoch + 1) % 100 == 0 and last_pred is not None:
-                    import matplotlib.pyplot as plt
-                    plt.figure(figsize=(8, 6))
-                    plt.plot(last_gt[:, 0], last_gt[:, 1], 'g-', label='Ground Truth', alpha=0.6)
-                    plt.plot(last_pred[:, 0], last_pred[:, 1], 'r--', label='Prediction', alpha=0.8)
-                    plt.title(f'Epoch {epoch+1} | RMSE: {avg_rmse:.4f}m | TF Ratio: {tf_ratio:.2f}')
-                    plt.xlabel('X (m)'); plt.ylabel('Y (m)')
-                    plt.legend(); plt.grid(True, alpha=0.3); plt.axis('equal')
-                    
-                    # 保存本地
-                    plot_path = f'outputs/figures/training_progress/epoch_{epoch+1:04d}.png'
-                    plt.savefig(plot_path)
-                    
-                    # 上传 WandB
-                    if logger.enabled:
-                        logger.log_figure(plt.gcf(), name=f'Progress/Trajectory_Epoch_{epoch+1}')
-                    
-                    plt.close()
-                    print(f"  [Viz] Saved progress plot to {plot_path} and uploaded to WandB")
+            # 每 100 个 Epoch 画一次轨迹对比图
+            if (epoch + 1) % 100 == 0 and last_pred is not None:
+                import matplotlib.pyplot as plt
+                plt.figure(figsize=(8, 6))
+                plt.plot(last_gt[:, 0], last_gt[:, 1], 'g-', label='Ground Truth', alpha=0.6)
+                plt.plot(last_pred[:, 0], last_pred[:, 1], 'r--', label='Prediction', alpha=0.8)
+                plt.title(f'Epoch {epoch+1} | RMSE: {avg_rmse:.4f}m | TF Ratio: {tf_ratio:.2f}')
+                plt.xlabel('X (m)'); plt.ylabel('Y (m)')
+                plt.legend(); plt.grid(True, alpha=0.3); plt.axis('equal')
+                
+                # 保存本地
+                plot_path = f'outputs/figures/training_progress/epoch_{epoch+1:04d}.png'
+                plt.savefig(plot_path)
+                
+                # 上传 WandB
+                if logger.enabled:
+                    logger.log_figure(plt.gcf(), name=f'Progress/Trajectory_Epoch_{epoch+1}')
+                
+                plt.close()
+                print(f"  [Viz] Saved progress plot to {plot_path} and uploaded to WandB")
 
             if logger.enabled:
                 logger.log_metrics({'train/rmse': avg_rmse, 'train/loss': avg_loss, 'train/tf_ratio': tf_ratio}, step=epoch)
