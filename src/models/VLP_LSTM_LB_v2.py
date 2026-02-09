@@ -84,7 +84,9 @@ class Attentive_VLP_LSTM(nn.Module):
         freq_mask = (rss_freqs.unsqueeze(1) == global_led_freqs.unsqueeze(0)).float()
         self.register_buffer('freq_mask', freq_mask)
         
-        query_input_dim = 1 + 3
+        # 修改：输入维度从 1+3 变为 smoothing_window + 3
+        # 每个 RSS 通道现在输入一个窗口的数据
+        query_input_dim = self.smoothing_window + 3
         self.query_encoder = nn.Sequential(
             nn.Linear(query_input_dim, 64), nn.ReLU(), nn.Linear(64, lstm_hidden // 2)
         )
@@ -115,27 +117,22 @@ class Attentive_VLP_LSTM(nn.Module):
         batch, T, rss_dim = rss_seq.shape
         assert rss_dim == self.rss_dim
 
-        # --- 窗口平滑处理 ---
-        # 如果设置了平滑窗口，应用 1D 平均池化进行降噪
+        # --- 窗口化处理 (不再直接平均) ---
         if self.smoothing_window > 1:
-            # rss_seq: [B, T, 12] -> [B, 12, T]
-            rss_smooth = rss_seq.transpose(1, 2)
-            # 使用 padding 保持长度一致，kernel_size=W, stride=1, padding=W//2
-            rss_smooth = F.avg_pool1d(
-                rss_smooth, 
-                kernel_size=self.smoothing_window, 
-                stride=1, 
-                padding=self.smoothing_window // 2,
-                count_include_pad=False
-            )
-            # 修正由于 padding 导致的偶数窗口长度可能产生的 1 帧偏差
-            if rss_smooth.shape[2] > T:
-                rss_smooth = rss_smooth[:, :, :T]
-            elif rss_smooth.shape[2] < T:
-                # 补齐长度（针对特殊情况）
-                rss_smooth = F.pad(rss_smooth, (0, T - rss_smooth.shape[2]), mode='replicate')
-            
-            rss_seq = rss_smooth.transpose(1, 2)
+            # 使用 unfold 获取滑动窗口
+            # rss_seq: [B, T, 12] -> transpose -> [B, 12, T]
+            # unfold(2, W, 1) -> [B, 12, T_new, W]
+            padding = self.smoothing_window // 2
+            rss_padded = F.pad(rss_seq.transpose(1, 2), (padding, padding), mode='replicate')
+            rss_windows = rss_padded.unfold(2, self.smoothing_window, 1)
+            # 形状调整为 [B, T, 12, W]
+            rss_windows = rss_windows.permute(0, 2, 1, 3)
+            # 如果由于奇偶性导致长度多了1帧，截断
+            if rss_windows.shape[1] > T:
+                rss_windows = rss_windows[:, :T, :, :]
+        else:
+            # 降级为 [B, T, 12, 1]
+            rss_windows = rss_seq.unsqueeze(-1)
 
         prev_pos = init_pos.clone() if init_pos is not None else self.global_led_pos.mean(dim=0, keepdim=True).expand(batch, -1)
         hx = None
@@ -145,33 +142,36 @@ class Attentive_VLP_LSTM(nn.Module):
         global_keys = self.key_encoder(key_input).expand(batch, -1, -1)
 
         for t in range(T):
-            rss_t = rss_seq[:, t, :]
+            # 取出当前时刻的 12 通道窗口数据: [B, 12, W]
+            rss_win_t = rss_windows[:, t, :, :]
             
             # Scheduled Sampling: 决定当前步是否使用真值
-            # 只有在训练模式、有真值序列且随机概率满足 tf_ratio 时使用真值
             use_gt = self.training and gt_pos_seq is not None and t > 0 and torch.rand(1).item() < tf_ratio
-            
             guidance_pos = gt_pos_seq[:, t-1, :] if use_gt else prev_pos
 
-            query_input = torch.cat([rss_t.unsqueeze(-1), guidance_pos.unsqueeze(1).expand(-1, self.rss_dim, -1)], dim=-1)
+            # 构建 Query: 将 [B, 12, W] 与 [B, 1, 3] 拼接
+            # guidance_pos 扩展为 [B, 12, 3]
+            pos_feat = guidance_pos.unsqueeze(1).expand(-1, self.rss_dim, -1)
+            query_input = torch.cat([rss_win_t, pos_feat], dim=-1) # [B, 12, W+3]
+            
             queries = self.query_encoder(query_input)
             attn_scores = torch.bmm(queries, global_keys.transpose(1, 2))
             
             dist_sq = (guidance_pos.unsqueeze(1) - self.global_led_pos.unsqueeze(0)).pow(2).sum(-1)
             dist_bias = 0.5 * torch.log(1.0 / (dist_sq + self.dist_eps))
-            
-            # Fix: Expand dist_bias to match [batch, rss_dim, led_num]
-            # dist_bias shape: [batch, led_num] -> [batch, 1, led_num]
             attn_scores += dist_bias.unsqueeze(1)
 
-            # 使用数据类型安全的掩码值
             mask_value = torch.finfo(attn_scores.dtype).min if attn_scores.dtype.is_floating_point else -1e9
             attn_scores.masked_fill_(self.freq_mask.unsqueeze(0) == 0, mask_value)
             attn_weights = F.softmax(attn_scores, dim=-1)
 
             aggregated_feat = torch.matmul(attn_weights, self.global_led_feat)
             
-            lstm_input_t = torch.cat([rss_t.unsqueeze(-1), aggregated_feat], dim=-1)
+            # LSTM 输入仍然使用当前点（窗口中心）的 RSS 值作为主要信号特征
+            # 或者使用窗口均值？为了保持“不直接平均”的初衷，我们取窗口中心点的值
+            rss_center_t = rss_win_t[:, :, self.smoothing_window // 2].unsqueeze(-1)
+            
+            lstm_input_t = torch.cat([rss_center_t, aggregated_feat], dim=-1)
             fuse_t = lstm_input_t.reshape(batch, 1, -1)
             
             out_t, hx = self.lstm(fuse_t, hx)

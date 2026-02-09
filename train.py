@@ -204,29 +204,35 @@ def main():
                 init_pos = gt_pos[:, 0, :]
                 
                 optimizer.zero_grad(set_to_none=True)
-                with torch.amp.autocast('cuda', enabled=scaler.is_enabled()):
-                    # Forward pass (传入 init_pos 和 tf_ratio)
-                    pred_pos = model(rss_seq, init_pos=init_pos, gt_pos_seq=gt_pos, tf_ratio=tf_ratio)
-                    
-                    # --- 特殊处理 Hierarchical 模型 ---
-                    if args.model == 'hierarchical':
-                        # GT 形状原为 [B, T, 3]
-                        # 模型输出为 [B, N_windows, 3]
-                        # 我们需要对 GT 进行相同的滑动窗口切片，并取每个块的最后一个点
-                        window_size = model_config.get('window_size', 50)
-                        stride = model_config.get('stride', 25)
-                        
-                        # 使用 unfold 提取真值窗口
-                        gt_chunks = gt_pos.transpose(1, 2).unfold(2, window_size, stride)
-                        target_pos = gt_chunks[:, :, :, -1].transpose(1, 2)
-                    else:
-                        target_pos = gt_pos
-                    
-                    # Calculate loss (对比预测值与下采样后的真值)
-                    loss = criterion(pred_pos, target_pos)
-                
-                scaler.scale(loss).backward()
-                scaler.step(optimizer)
+                                    with torch.amp.autocast('cuda', enabled=scaler.is_enabled()):
+                                        # Forward pass (传入 init_pos 和 tf_ratio)
+                                        pred_pos = model(rss_seq, init_pos=init_pos, gt_pos_seq=gt_pos, tf_ratio=tf_ratio)
+                                        
+                                        # --- 特殊处理 Hierarchical 模型 ---
+                                        if args.model == 'hierarchical':
+                                            window_size = model_config.get('window_size', 50)
+                                            stride = model_config.get('stride', 25)
+                                            gt_chunks = gt_pos.transpose(1, 2).unfold(2, window_size, stride)
+                                            target_pos = gt_chunks[:, :, :, -1].transpose(1, 2)
+                                            loss = criterion(pred_pos, target_pos)
+                                        
+                                        # --- 特殊处理 V2 模型的 Window Loss ---
+                                        elif args.model == 'v2' and model_config.get('smoothing_window', 1) > 1:
+                                            sw = model_config['smoothing_window']
+                                            # 使用 unfold 将 pred 和 gt 都切分为窗口
+                                            # pred: [B, T, 3] -> [B, 3, T] -> unfold -> [B, 3, T_win, sw]
+                                            # 我们希望计算每个时间点对应的那个窗口的平均 Loss
+                                            p_win = pred_pos.transpose(1, 2).unfold(2, sw, 1)
+                                            g_win = gt_pos.transpose(1, 2).unfold(2, sw, 1)
+                                            # 计算窗口间的 MSE
+                                            loss = F.mse_loss(p_win, g_win)
+                                            target_pos = gt_pos # 绘图仍使用原图
+                                        
+                                        else:
+                                            target_pos = gt_pos
+                                            loss = criterion(pred_pos, target_pos)
+                                    
+                                    scaler.scale(loss).backward()                scaler.step(optimizer)
                 scaler.update()
                 
                 epoch_rmse += calc_rmse(pred_pos, target_pos)
