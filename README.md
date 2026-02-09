@@ -39,8 +39,8 @@ Deep learning-based indoor positioning using LED signals and LSTM networks. This
 
 | Feature | V2 (Baseline) | MultiHead (Advanced) | Hierarchical (Modular) |
 | :--- | :--- | :--- | :--- |
-| **Attention** | Single-head Global | **Three-Head Attention** | N/A (Feature Extraction) |
-| **Signal Processing** | **Windowed (Temporal)** | Hierarchical (Strong/Weak) | **Chunk-based (ResNet)** |
+| **Attention** | Single-head Global | **Three-Head Attention** | **Spatial-aware (Chunk-level)** |
+| **Signal Processing** | **Windowed (Temporal)** | Hierarchical (Strong/Weak) | **CNN + Spatial Attention** |
 | **Integrator** | LSTM | LSTM | **Global LSTM** |
 | **Best For** | Stable environments | Complex environments | **Ultra-long sequences** |
 | **Code** | `..._v2.py` | `..._multihead.py` | `..._hierarchical.py` |
@@ -63,7 +63,7 @@ python3 train.py --model multihead --epochs 1000
 ```
 
 ### 3. Train Hierarchical Model (Hierarchical)
-Uses a ResNet sub-network to "pre-integrate" signal blocks, significantly reducing memory usage for long paths.
+Uses a hybrid **CNN + Spatial-aware Attention** sub-network to "pre-integrate" signal blocks. It implements a closed-loop feedback mechanism where each block's prediction anchors the next, ensuring continuity in ultra-long paths.
 ```bash
 python3 train.py --model hierarchical --epochs 500
 ```
