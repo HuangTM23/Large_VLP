@@ -21,6 +21,7 @@ Deep learning-based indoor positioning using LED signals and LSTM networks. This
     - **Stage 1 (0-20%)**: Full Teacher Forcing for stable initialization.
     - **Stage 2 (20-80%)**: Linear decay to reduce dependency on ground truth.
     - **Stage 3 (80-100%)**: Full Autoregression (Self-Regressive) to simulate real-world inference and enhance error correction.
+- **Window-based Loss (Window Loss)**: The V2 model now uses MSE over overlapping trajectory windows instead of single points, enforcing local smoothness and trajectory shape consistency.
 - **Dual Training Modes**:
     - **Full Trajectory**: Processes entire paths at once. Best for precision and long-term memory.
     - **Sliding Window**: Splits paths into fixed windows. Best for speed, parallelization, and handling extremely long sequences.
@@ -39,7 +40,7 @@ Deep learning-based indoor positioning using LED signals and LSTM networks. This
 | Feature | V2 (Baseline) | MultiHead (Advanced) | Hierarchical (Modular) |
 | :--- | :--- | :--- | :--- |
 | **Attention** | Single-head Global | **Three-Head Attention** | N/A (Feature Extraction) |
-| **Signal Processing** | Smoothed (Moving Avg) | Hierarchical (Strong/Weak) | **Chunk-based (ResNet)** |
+| **Signal Processing** | **Windowed (Temporal)** | Hierarchical (Strong/Weak) | **Chunk-based (ResNet)** |
 | **Integrator** | LSTM | LSTM | **Global LSTM** |
 | **Best For** | Stable environments | Complex environments | **Ultra-long sequences** |
 | **Code** | `..._v2.py` | `..._multihead.py` | `..._hierarchical.py` |
@@ -51,7 +52,7 @@ Deep learning-based indoor positioning using LED signals and LSTM networks. This
 All training is handled via `train.py`. The script uses **Full Trajectory** mode by default to maintain LSTM state continuity.
 
 ### 1. Train Baseline Model (V2)
-Now supports RSS smoothing via `smoothing_window` in `config.yaml`.
+Now inputs a window of RSS values per step. The model learns temporal weights from the window rather than simple averaging.
 ```bash
 python3 train.py --model v2 --epochs 3000
 ```
