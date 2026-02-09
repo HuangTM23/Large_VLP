@@ -36,13 +36,13 @@ Deep learning-based indoor positioning using LED signals and LSTM networks. This
 
 ## 🧠 Model Architectures
 
-| Feature | V2 (Baseline) | MultiHead (Advanced) |
-| :--- | :--- | :--- |
-| **Attention** | Single-head Global Attention | **Three-Head Attention** (Near/Far/Context) |
-| **Signal Processing** | Uniform processing | Hierarchical processing (Strong vs. Weak signals) |
-| **Adaptability** | Static parameters | **Dynamic Fusion** based on motion speed |
-| **Best For** | Simple, low-interference environments | Complex, dynamic environments |
-| **Code** | `src/models/VLP_LSTM_LB_v2.py` | `src/models/VLP_LSTM_LB_multihead.py` |
+| Feature | V2 (Baseline) | MultiHead (Advanced) | Hierarchical (Modular) |
+| :--- | :--- | :--- | :--- |
+| **Attention** | Single-head Global | **Three-Head Attention** | N/A (Feature Extraction) |
+| **Signal Processing** | Smoothed (Moving Avg) | Hierarchical (Strong/Weak) | **Chunk-based (ResNet)** |
+| **Integrator** | LSTM | LSTM | **Global LSTM** |
+| **Best For** | Stable environments | Complex environments | **Ultra-long sequences** |
+| **Code** | `..._v2.py` | `..._multihead.py` | `..._hierarchical.py` |
 
 ---
 
@@ -51,27 +51,20 @@ Deep learning-based indoor positioning using LED signals and LSTM networks. This
 All training is handled via `train.py`. The script uses **Full Trajectory** mode by default to maintain LSTM state continuity.
 
 ### 1. Train Baseline Model (V2)
-
+Now supports RSS smoothing via `smoothing_window` in `config.yaml`.
 ```bash
 python3 train.py --model v2 --epochs 3000
 ```
 
 ### 2. Train Multi-Head Model (MultiHead)
-
 ```bash
 python3 train.py --model multihead --epochs 1000
 ```
-*Note: MultiHead converges faster; 500-1000 epochs are usually sufficient.*
 
-### 3. Custom Parameters
-Override `config.yaml` defaults via command line:
+### 3. Train Hierarchical Model (Hierarchical)
+Uses a ResNet sub-network to "pre-integrate" signal blocks, significantly reducing memory usage for long paths.
 ```bash
-python3 train.py \
-    --model multihead \
-    --lr 5e-4 \
-    --epochs 1000 \
-    --train_dir data/train \
-    --output outputs/models/my_experiment.pth
+python3 train.py --model hierarchical --epochs 500
 ```
 
 ---

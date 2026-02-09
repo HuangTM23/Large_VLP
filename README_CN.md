@@ -36,13 +36,13 @@
 
 ## 🧠 模型架构
 
-| 特性 | V2 (基线模型) | MultiHead (高级模型) |
-| :--- | :--- | :--- |
-| **注意力机制** | 单头全局注意力 | **三头注意力** (近场/远场/上下文) |
-| **信号处理** | 统一处理所有信号 | 分层处理强信号与弱信号 |
-| **动态适应** | 静态参数 | **动态融合**，根据速度自适应调整 |
-| **适用场景** | 简单、干扰少的环境 | 复杂环境，信号波动大 |
-| **代码位置** | `src/models/VLP_LSTM_LB_v2.py` | `src/models/VLP_LSTM_LB_multihead.py` |
+| 特性 | V2 (基线模型) | MultiHead (高级模型) | Hierarchical (分层模型) |
+| :--- | :--- | :--- | :--- |
+| **注意力** | 单头全局注意力 | **三头注意力** | N/A (特征提取) |
+| **信号处理** | 平滑处理 (均值) | 分层处理 (强/弱) | **块处理 (ResNet)** |
+| **整合器** | LSTM | LSTM | **全局 LSTM** |
+| **最佳场景** | 稳定环境 | 复杂、动态环境 | **超长轨迹 (防OOM)** |
+| **代码位置** | `..._v2.py` | `..._multihead.py` | `..._hierarchical.py` |
 
 ---
 
@@ -51,27 +51,20 @@
 所有训练通过 `train.py` 进行。该脚本默认使用 **全轨迹模式 (Full Trajectory)** 以保证 LSTM 状态的连续性。
 
 ### 1. 训练基线模型 (V2)
-
+支持通过 `config.yaml` 中的 `smoothing_window` 进行 RSS 降噪。
 ```bash
 python3 train.py --model v2 --epochs 3000
 ```
 
 ### 2. 训练多头模型 (MultiHead)
-
 ```bash
 python3 train.py --model multihead --epochs 1000
 ```
-*注：MultiHead 收敛较快，通常 500-1000 epoch 即可。*
 
-### 3. 自定义参数
-你可以灵活调整超参数覆盖 `config.yaml` 中的默认值：
+### 3. 训练层次化模型 (Hierarchical)
+利用 ResNet 子网络对信号块进行“预积分”，极大降低超长路径的显存占用。
 ```bash
-python3 train.py \
-    --model multihead \
-    --lr 5e-4 \
-    --epochs 1000 \
-    --train_dir data/train \
-    --output outputs/models/my_experiment.pth
+python3 train.py --model hierarchical --epochs 500
 ```
 
 ---
