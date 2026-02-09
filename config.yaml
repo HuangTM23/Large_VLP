@@ -35,8 +35,15 @@ model:
     lstm_hidden: 128
     lstm_layers: 2
     dropout: 0.5
+    smoothing_window: 5
   multihead:
     lstm_hidden: 128
     lstm_layers: 2
     dropout: 0.5
     head_dim: 64
+  hierarchical:
+    window_size: 50
+    stride: 25
+    feature_dim: 64
+    lstm_hidden: 128
+    dropout: 0.2

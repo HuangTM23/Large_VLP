@@ -145,16 +145,32 @@ def main():
         
         # Initialize model
         ModelClass = model_info['class']
+        
+        # 获取模型特定的配置
+        model_name = args.model
+        model_params = config.get('model', {}).get(model_name, {})
+        
+        # 基础配置
         model_config = {
             'global_led_num': len(led_pos_freq),
             'led_feat_dim': 8,
-            'lstm_hidden': 128,
-            'lstm_layers': 2,
-            'dropout': 0.5,
+            'lstm_hidden': model_params.get('lstm_hidden', 128),
+            'lstm_layers': model_params.get('lstm_layers', 2),
+            'dropout': model_params.get('dropout', 0.5),
             'global_led_pos_freq': led_tensor
         }
-        if args.model == 'multihead':
-            model_config['head_dim'] = 64
+        
+        # 针对特定模型的额外参数
+        if model_name == 'multihead':
+            model_config['head_dim'] = model_params.get('head_dim', 64)
+        elif model_name == 'v2':
+            model_config['smoothing_window'] = model_params.get('smoothing_window', 1)
+        elif model_name == 'hierarchical':
+            model_config['window_size'] = model_params.get('window_size', 50)
+            model_config['stride'] = model_params.get('stride', 25)
+            model_config['feature_dim'] = model_params.get('feature_dim', 64)
+            # Hierarchical 模型不需要 lstm_layers（目前实现是固定的）
+            if 'lstm_layers' in model_config: del model_config['lstm_layers']
         
         model = ModelClass(**model_config).to(device)
         
@@ -166,7 +182,11 @@ def main():
         
         best_rmse = float('inf')
         
-        print("Starting Training (Scheduled Sampling: 1.0 -> 0.0)")
+        # 创建专用文件夹
+        os.makedirs('outputs/figures/training_progress', exist_ok=True)
+        os.makedirs('outputs/models/best', exist_ok=True)
+        
+        print(f"Starting Training ({model_name}, Scheduled Sampling: 1.0 -> 0.0)")
         for epoch in range(epochs):
             model.train()
             
@@ -176,6 +196,7 @@ def main():
             else: tf_ratio = 0.0
             
             epoch_rmse, epoch_loss, num_batches = 0.0, 0.0, 0
+            last_pred, last_gt = None, None  # 用于记录最后一次预测
             
             for batch_data in train_loader:
                 rss_seq = batch_data['rss'].to(device)
@@ -184,21 +205,63 @@ def main():
                 
                 optimizer.zero_grad(set_to_none=True)
                 with torch.amp.autocast('cuda', enabled=scaler.is_enabled()):
+                    # Forward pass (传入 init_pos 和 tf_ratio)
                     pred_pos = model(rss_seq, init_pos=init_pos, gt_pos_seq=gt_pos, tf_ratio=tf_ratio)
-                    loss = criterion(pred_pos, gt_pos)
+                    
+                    # --- 特殊处理 Hierarchical 模型 ---
+                    if args.model == 'hierarchical':
+                        # GT 形状原为 [B, T, 3]
+                        # 模型输出为 [B, N_windows, 3]
+                        # 我们需要对 GT 进行相同的滑动窗口切片，并取每个块的最后一个点
+                        window_size = model_config.get('window_size', 50)
+                        stride = model_config.get('stride', 25)
+                        
+                        # 使用 unfold 提取真值窗口
+                        gt_chunks = gt_pos.transpose(1, 2).unfold(2, window_size, stride)
+                        target_pos = gt_chunks[:, :, :, -1].transpose(1, 2)
+                    else:
+                        target_pos = gt_pos
+                    
+                    # Calculate loss (对比预测值与下采样后的真值)
+                    loss = criterion(pred_pos, target_pos)
                 
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
                 scaler.update()
                 
-                epoch_rmse += calc_rmse(pred_pos, gt_pos)
+                epoch_rmse += calc_rmse(pred_pos, target_pos)
                 epoch_loss += loss.item()
                 num_batches += 1
+                
+                # 保存最后一个样本用于绘图
+                last_pred = pred_pos[0].detach().cpu().numpy()
+                last_gt = target_pos[0].detach().cpu().numpy()
             
             scheduler.step()
             avg_rmse = epoch_rmse / num_batches
             avg_loss = epoch_loss / num_batches
             
+                # 每 100 个 Epoch 画一次轨迹对比图
+                if (epoch + 1) % 100 == 0 and last_pred is not None:
+                    import matplotlib.pyplot as plt
+                    plt.figure(figsize=(8, 6))
+                    plt.plot(last_gt[:, 0], last_gt[:, 1], 'g-', label='Ground Truth', alpha=0.6)
+                    plt.plot(last_pred[:, 0], last_pred[:, 1], 'r--', label='Prediction', alpha=0.8)
+                    plt.title(f'Epoch {epoch+1} | RMSE: {avg_rmse:.4f}m | TF Ratio: {tf_ratio:.2f}')
+                    plt.xlabel('X (m)'); plt.ylabel('Y (m)')
+                    plt.legend(); plt.grid(True, alpha=0.3); plt.axis('equal')
+                    
+                    # 保存本地
+                    plot_path = f'outputs/figures/training_progress/epoch_{epoch+1:04d}.png'
+                    plt.savefig(plot_path)
+                    
+                    # 上传 WandB
+                    if logger.enabled:
+                        logger.log_figure(plt.gcf(), name=f'Progress/Trajectory_Epoch_{epoch+1}')
+                    
+                    plt.close()
+                    print(f"  [Viz] Saved progress plot to {plot_path} and uploaded to WandB")
+
             if logger.enabled:
                 logger.log_metrics({'train/rmse': avg_rmse, 'train/loss': avg_loss, 'train/tf_ratio': tf_ratio}, step=epoch)
             
@@ -207,8 +270,12 @@ def main():
             
             if avg_rmse < best_rmse:
                 best_rmse = avg_rmse
+                # 保存到原有路径
                 torch.save({'epoch': epoch, 'model_state_dict': model.state_dict(), 'rmse': best_rmse, 'model_config': model_config}, 
                            args.output.replace('.pth', '_best.pth'))
+                # 同时保存到 best 文件夹
+                torch.save({'epoch': epoch, 'model_state_dict': model.state_dict(), 'rmse': best_rmse, 'model_config': model_config}, 
+                           f'outputs/models/best/{args.model}_best.pth')
         
         torch.save({'epoch': epochs, 'model_state_dict': model.state_dict(), 'rmse': avg_rmse, 'model_config': model_config}, args.output)
         print(f"\nTraining Complete! Best RMSE: {best_rmse:.4f}m")

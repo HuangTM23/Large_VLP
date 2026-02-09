@@ -22,10 +22,13 @@ from .VLP_LSTM_LB_multihead import (
     collate_pad as collate_pad_MH,
 )
 
+from .VLP_LSTM_LB_hierarchical import Hierarchical_VLP_LSTM
+
 __all__ = [
     # Models
     'Attentive_VLP_LSTM',
     'MultiHead_VLP_LSTM',
+    'Hierarchical_VLP_LSTM',
     # Training functions
     'train_v2',
     'train_multihead',
@@ -50,6 +53,12 @@ MODEL_REGISTRY = {
         'train': train_multihead,
         'test': test_multihead,
         'description': 'Three-head attention VLP-LSTM (dynamic adaptation)',
+    },
+    'hierarchical': {
+        'class': Hierarchical_VLP_LSTM,
+        'train': train_v2,  # Uses general logic
+        'test': test_v2,
+        'description': 'Hierarchical ResNet + LSTM (chunk-based pre-integration)',
     },
 }
 

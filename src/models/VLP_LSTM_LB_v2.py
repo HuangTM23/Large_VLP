@@ -58,13 +58,14 @@ class Attentive_VLP_LSTM(nn.Module):
     a fixed number of RSS channels with a larger, global set of LEDs.
     """
     def __init__(self, global_led_num, led_feat_dim=8, lstm_hidden=128, lstm_layers=2, dropout=0.5, 
-                 use_layernorm=True, global_led_pos_freq=None):
+                 use_layernorm=True, global_led_pos_freq=None, smoothing_window=1):
         super().__init__()
         self.rss_dim = 12
         self.global_led_num = global_led_num
         self.led_feat_dim = led_feat_dim
         self.dist_eps, self.log_eps = 1e-8, 1e-8
         self.use_layernorm = use_layernorm
+        self.smoothing_window = smoothing_window
 
         if global_led_pos_freq is None:
             raise ValueError("Must provide global_led_pos_freq during model initialization.")
@@ -113,6 +114,28 @@ class Attentive_VLP_LSTM(nn.Module):
         device = rss_seq.device
         batch, T, rss_dim = rss_seq.shape
         assert rss_dim == self.rss_dim
+
+        # --- 窗口平滑处理 ---
+        # 如果设置了平滑窗口，应用 1D 平均池化进行降噪
+        if self.smoothing_window > 1:
+            # rss_seq: [B, T, 12] -> [B, 12, T]
+            rss_smooth = rss_seq.transpose(1, 2)
+            # 使用 padding 保持长度一致，kernel_size=W, stride=1, padding=W//2
+            rss_smooth = F.avg_pool1d(
+                rss_smooth, 
+                kernel_size=self.smoothing_window, 
+                stride=1, 
+                padding=self.smoothing_window // 2,
+                count_include_pad=False
+            )
+            # 修正由于 padding 导致的偶数窗口长度可能产生的 1 帧偏差
+            if rss_smooth.shape[2] > T:
+                rss_smooth = rss_smooth[:, :, :T]
+            elif rss_smooth.shape[2] < T:
+                # 补齐长度（针对特殊情况）
+                rss_smooth = F.pad(rss_smooth, (0, T - rss_smooth.shape[2]), mode='replicate')
+            
+            rss_seq = rss_smooth.transpose(1, 2)
 
         prev_pos = init_pos.clone() if init_pos is not None else self.global_led_pos.mean(dim=0, keepdim=True).expand(batch, -1)
         hx = None
