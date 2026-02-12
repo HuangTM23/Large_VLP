@@ -8,6 +8,9 @@ import sys
 import os
 import argparse
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import torch.optim as optim
 from pathlib import Path
 
 # Add src to path
@@ -136,7 +139,6 @@ def main():
     
     # Run training
     try:
-        from torch import nn, optim
         from models.VLP_LSTM_LB_v2 import calc_rmse
         
         # Get LED info
