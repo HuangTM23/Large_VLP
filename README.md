@@ -37,13 +37,13 @@ Deep learning-based indoor positioning using LED signals and LSTM networks. This
 
 ## 🧠 Model Architectures
 
-| Feature | V2 (Baseline) | MultiHead (Advanced) | Hierarchical (Modular) |
-| :--- | :--- | :--- | :--- |
-| **Attention** | Single-head Global | **Three-Head Attention** | **Spatial-aware (Chunk-level)** |
-| **Signal Processing** | **Windowed (Temporal)** | Hierarchical (Strong/Weak) | **CNN + Spatial Attention** |
-| **Integrator** | LSTM | LSTM | **Global LSTM** |
-| **Best For** | Stable environments | Complex environments | **Ultra-long sequences** |
-| **Code** | `..._v2.py` | `..._multihead.py` | `..._hierarchical.py` |
+| Feature | V2 (Baseline) | MultiHead (Advanced) | Hierarchical (Modular) | V3 (Topological) |
+| :--- | :--- | :--- | :--- | :--- |
+| **Attention** | Single-head Global | **Three-Head Attention** | **Spatial-aware (Chunk-level)** | **Implicit (LSTM-guided)** |
+| **Signal Processing** | **Windowed (Temporal)** | Hierarchical (Strong/Weak) | **CNN + Spatial Attention** | **1D-CNN Fingerprint + Fourier** |
+| **Integrator** | LSTM | LSTM | **Global LSTM** | **LSTM (State-init)** |
+| **Best For** | Stable environments | Complex environments | **Ultra-long sequences** | **High-precision & Robustness** |
+| **Code** | `..._v2.py` | `..._multihead.py` | `..._hierarchical.py` | `..._v3.py` |
 
 ---
 
@@ -58,14 +58,25 @@ python3 train.py --model v2 --epochs 3000
 ```
 
 ### 2. Train Multi-Head Model (MultiHead)
+Uses **Kendall's Automatic Loss Balancing** to weight Position MSE and Heading Loss.
 ```bash
 python3 train.py --model multihead --epochs 1000
 ```
 
 ### 3. Train Hierarchical Model (Hierarchical)
-Uses a hybrid **CNN + Spatial-aware Attention** sub-network to "pre-integrate" signal blocks. It implements a closed-loop feedback mechanism where each block's prediction anchors the next, ensuring continuity in ultra-long paths.
+Uses a hybrid **CNN + Spatial-aware Attention** sub-network. Implements continuity constraints between blocks.
 ```bash
 python3 train.py --model hierarchical --epochs 500
+```
+
+### 4. Train Topological Model (V3)
+The most advanced version, featuring:
+- **Implicit Memory Attention**: Uses LSTM hidden states to guide attention instead of raw coordinates, reducing error propagation.
+- **Topological LED Encoder**: Models LED physical neighborhoods using **Graph Convolutional Networks (GNN)** and high-dimensional **Fourier Feature Mapping**.
+- **RSS Fingerprint**: 1D-CNN extracts relative channel ratios (topology) for robust signal identification.
+- **Tri-Loss Balancing**: Automatically balances **Position MSE**, **Heading Loss**, and **Geometric Consistency Loss**.
+```bash
+python3 train.py --model v3 --epochs 1000
 ```
 
 ---

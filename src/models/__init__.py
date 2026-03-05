@@ -23,12 +23,14 @@ from .VLP_LSTM_LB_multihead import (
 )
 
 from .VLP_LSTM_LB_hierarchical import Hierarchical_VLP_LSTM
+from .VLP_LSTM_LB_v3 import VLP_LSTM_LB_v3
 
 __all__ = [
     # Models
     'Attentive_VLP_LSTM',
     'MultiHead_VLP_LSTM',
     'Hierarchical_VLP_LSTM',
+    'VLP_LSTM_LB_v3',
     # Training functions
     'train_v2',
     'train_multihead',
@@ -53,6 +55,12 @@ MODEL_REGISTRY = {
         'train': train_multihead,
         'test': test_multihead,
         'description': 'Three-head attention VLP-LSTM (dynamic adaptation)',
+    },
+    'v3': {
+        'class': VLP_LSTM_LB_v3,
+        'train': train_v2,
+        'test': test_v2,
+        'description': 'Topological VLP-LSTM with Fourier Encoding & GNN',
     },
     'hierarchical': {
         'class': Hierarchical_VLP_LSTM,

@@ -27,7 +27,7 @@ def main():
     
     # Model selection
     parser.add_argument('--model', type=str, default='v2',
-                       choices=['v2', 'multihead', 'hierarchical'],
+                       choices=['v2', 'multihead', 'hierarchical', 'v3'],
                        help='Model architecture (default: v2)')
     
     # Data paths
@@ -179,7 +179,27 @@ def main():
         
         # Optimizer
         criterion = nn.MSELoss()
-        optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
+        
+        # --- 集成自动加权损失 (Kendall 方案) ---
+        from utils.loss_utils import AutomaticWeightedLoss, HeadingLoss, get_continuity_loss, GeometricConsistencyLoss
+        loss_balancer = None
+        heading_criterion = HeadingLoss()
+        topo_criterion = GeometricConsistencyLoss()
+        
+        if args.model == 'multihead':
+            # Multihead: [Position MSE, Heading Loss]
+            loss_balancer = AutomaticWeightedLoss(num_losses=2).to(device)
+        elif args.model in ['hierarchical', 'v3']:
+            # Hierarchical & V3: [Position MSE, Heading Loss, Aux Loss]
+            # Hierarchical -> Aux is Continuity, V3 -> Aux is Topology
+            loss_balancer = AutomaticWeightedLoss(num_losses=3).to(device)
+            
+        # 将 loss_balancer 的参数加入优化器
+        params = list(model.parameters())
+        if loss_balancer is not None:
+            params += list(loss_balancer.parameters())
+            
+        optimizer = optim.AdamW(params, lr=lr, weight_decay=1e-4)
         scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=1e-6)
         scaler = torch.amp.GradScaler('cuda', enabled=(device.type == 'cuda'))
         
@@ -189,16 +209,25 @@ def main():
         os.makedirs('outputs/figures/training_progress', exist_ok=True)
         os.makedirs('outputs/models/best', exist_ok=True)
         
-        print(f"Starting Training ({model_name}, Scheduled Sampling: 1.0 -> 0.0)")
+        # --- 策略说明 ---
+        strategy_msg = "Scheduled Sampling: 1.0 -> 0.0"
+        if args.model == 'v3':
+            strategy_msg = "Implicit Memory Navigation (TF-Free)"
+            
+        print(f"Starting Training ({model_name}, Strategy: {strategy_msg})")
         for epoch in range(epochs):
             model.train()
             
             # Scheduled Sampling Ratio
-            if epoch < epochs * 0.2: tf_ratio = 1.0
-            elif epoch < epochs * 0.8: tf_ratio = 1.0 - (epoch - epochs * 0.2) / (epochs * 0.6)
-            else: tf_ratio = 0.0
+            if args.model == 'v3':
+                tf_ratio = 0.0 # V3 不需要 TF，由 LSTM 隐状态驱动
+            else:
+                if epoch < epochs * 0.2: tf_ratio = 1.0
+                elif epoch < epochs * 0.8: tf_ratio = 1.0 - (epoch - epochs * 0.2) / (epochs * 0.6)
+                else: tf_ratio = 0.0
             
             epoch_rmse, epoch_loss, num_batches = 0.0, 0.0, 0
+            epoch_l_pos, epoch_l_heading, epoch_l_aux = 0.0, 0.0, 0.0
             last_pred, last_gt = None, None  # 用于记录最后一次预测
             
             for batch_data in train_loader:
@@ -208,27 +237,55 @@ def main():
                 
                 optimizer.zero_grad(set_to_none=True)
                 with torch.amp.autocast('cuda', enabled=scaler.is_enabled()):
-                    # Forward pass (传入 init_pos 和 tf_ratio)
+                    # Forward pass
                     pred_pos = model(rss_seq, init_pos=init_pos, gt_pos_seq=gt_pos, tf_ratio=tf_ratio)
                     
-                    # --- 特殊处理 Hierarchical 模型 ---
+                    # --- 多维度损失计算与自动平衡 ---
                     if args.model == 'hierarchical':
                         window_size = model_config.get('window_size', 50)
                         stride = model_config.get('stride', 25)
                         gt_chunks = gt_pos.transpose(1, 2).unfold(2, window_size, stride)
                         target_pos = gt_chunks[:, :, :, -1].transpose(1, 2)
-                        loss = criterion(pred_pos, target_pos)
-                    
-                    # --- 特殊处理 V2 模型的 Window Loss ---
+                        
+                        l_pos = criterion(pred_pos, target_pos)
+                        l_heading = heading_criterion(pred_pos, target_pos)
+                        l_aux = get_continuity_loss(pred_pos)
+                        
+                        loss = loss_balancer(l_pos, l_heading, l_aux)
+                        
+                        epoch_l_pos += l_pos.item()
+                        epoch_l_heading += l_heading.item()
+                        epoch_l_aux += l_aux.item()
+                        
+                    elif args.model == 'multihead':
+                        target_pos = gt_pos
+                        l_pos = criterion(pred_pos, target_pos)
+                        l_heading = heading_criterion(pred_pos, target_pos)
+                        
+                        loss = loss_balancer(l_pos, l_heading)
+                        
+                        epoch_l_pos += l_pos.item()
+                        epoch_l_heading += l_heading.item()
+
+                    elif args.model == 'v3':
+                        target_pos = gt_pos
+                        l_pos = criterion(pred_pos, target_pos)
+                        l_heading = heading_criterion(pred_pos, target_pos)
+                        l_aux = topo_criterion(pred_pos, rss_seq)
+                        
+                        loss = loss_balancer(l_pos, l_heading, l_aux)
+                        
+                        epoch_l_pos += l_pos.item()
+                        epoch_l_heading += l_heading.item()
+                        epoch_l_aux += l_aux.item()
+                        
+                    # --- V2 逻辑保持不变 ---
                     elif args.model == 'v2' and model_config.get('smoothing_window', 1) > 1:
                         sw = model_config['smoothing_window']
-                        # 使用 unfold 将 pred 和 gt 都切分为窗口
                         p_win = pred_pos.transpose(1, 2).unfold(2, sw, 1)
                         g_win = gt_pos.transpose(1, 2).unfold(2, sw, 1)
-                        # 计算窗口间的 MSE
                         loss = F.mse_loss(p_win, g_win)
-                        target_pos = gt_pos # 绘图仍使用原图
-                    
+                        target_pos = gt_pos
                     else:
                         target_pos = gt_pos
                         loss = criterion(pred_pos, target_pos)
@@ -241,7 +298,6 @@ def main():
                 epoch_loss += loss.item()
                 num_batches += 1
                 
-                # 保存最后一个样本用于绘图
                 last_pred = pred_pos[0].detach().cpu().numpy()
                 last_gt = target_pos[0].detach().cpu().numpy()
             
@@ -249,29 +305,31 @@ def main():
             avg_rmse = epoch_rmse / num_batches
             avg_loss = epoch_loss / num_batches
             
-            # 每 100 个 Epoch 画一次轨迹对比图
-            if (epoch + 1) % 100 == 0 and last_pred is not None:
-                import matplotlib.pyplot as plt
-                plt.figure(figsize=(8, 6))
-                plt.plot(last_gt[:, 0], last_gt[:, 1], 'g-', label='Ground Truth', alpha=0.6)
-                plt.plot(last_pred[:, 0], last_pred[:, 1], 'r--', label='Prediction', alpha=0.8)
-                plt.title(f'Epoch {epoch+1} | RMSE: {avg_rmse:.4f}m | TF Ratio: {tf_ratio:.2f}')
-                plt.xlabel('X (m)'); plt.ylabel('Y (m)')
-                plt.legend(); plt.grid(True, alpha=0.3); plt.axis('equal')
-                
-                # 保存本地
-                plot_path = f'outputs/figures/training_progress/epoch_{epoch+1:04d}.png'
-                plt.savefig(plot_path)
-                
-                # 上传 WandB
-                if logger.enabled:
-                    logger.log_figure(plt.gcf(), name=f'Progress/Trajectory_Epoch_{epoch+1}')
-                
-                plt.close()
-                print(f"  [Viz] Saved progress plot to {plot_path} and uploaded to WandB")
-
+            # 记录详细指标到 WandB
             if logger.enabled:
-                logger.log_metrics({'train/rmse': avg_rmse, 'train/loss': avg_loss, 'train/tf_ratio': tf_ratio}, step=epoch)
+                metrics = {
+                    'train/rmse': avg_rmse, 
+                    'train/loss': avg_loss, 
+                    'train/tf_ratio': tf_ratio,
+                    'lr': optimizer.param_groups[0]['lr']
+                }
+                
+                if loss_balancer is not None:
+                    weights = loss_balancer.get_weights()
+                    metrics.update({
+                        'loss/pos_mse': epoch_l_pos / num_batches,
+                        'loss/heading': epoch_l_heading / num_batches,
+                        'weight/pos': weights[0].item(),
+                        'weight/heading': weights[1].item(),
+                    })
+                    if args.model in ['hierarchical', 'v3']:
+                        aux_name = 'continuity' if args.model == 'hierarchical' else 'topo'
+                        metrics.update({
+                            f'loss/{aux_name}': epoch_l_aux / num_batches,
+                            f'weight/{aux_name}': weights[2].item()
+                        })
+                
+                logger.log_metrics(metrics, step=epoch)
             
             if (epoch + 1) % 10 == 0 or epoch == epochs - 1:
                 print(f"Epoch {epoch+1}/{epochs} | TF: {tf_ratio:.2f} | Loss: {avg_loss:.4f} | RMSE: {avg_rmse:.4f}m")
